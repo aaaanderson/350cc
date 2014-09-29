@@ -2,14 +2,19 @@
 #include <string>
 #include <map>
 
-
-using namespace std;
-
 enum InstructionType
 {
 	A,
 	B,
 	C
+};
+
+enum SpecialOpcodes
+{
+	callFunc,
+	ret,
+	push,
+	pop
 };
 
 struct Instruction
@@ -29,23 +34,40 @@ struct Instruction
 
 class Assembler
 {
-public:
-	static map<string, int> opcodes;
-	static map<string, int> specialInstructions;
-	static map<string, int> registers;
-	map<string, int> labels;
+private:
+	static std::map<std::string, int> opcodes;
+	static std::map<std::string, SpecialOpcodes> specialInstructions;
+	static std::map<std::string, int> registers;
+	std::map<std::string, int> labels;
 	bool useHProtection;
 	bool isParsingData;
 	const bool createStack;
+	std::string errorText;
+	std::string assemblyCode;
+	bool hasExpandedCode;
 
-	Assembler(bool useHProtection = false, bool createStack = false) : useHProtection(useHProtection), isParsingData(false), createStack(createStack) {}
-	std::string Assemble(const std::string& input, std::string& errorText);
+public:
+	Assembler(const std::string& assemblyCode, bool useHProtection = false, bool createStack = false) :
+		useHProtection(useHProtection), isParsingData(false), createStack(createStack), assemblyCode(assemblyCode), hasExpandedCode(false) {}
+
+	std::string Assemble();
 	static std::string GenerateStackCode();
 
-private:
-	Instruction parseLine(const string& line, int currentLine, string& errorText);
-	bool findLabels(string input, string& errorText);
+	std::string GetErrorText() const { return this->errorText; }
+	std::string GetAssemblyCode() const { return this->assemblyCode; }
+	bool HasExpandedCode() const { return this->hasExpandedCode; }
 
-	static string formatOutput(string s);
-	static string createAssembledLine(const Instruction& instruction);
+private:
+	void prepareInput();
+	bool findLabels(std::string input);
+	void expandSpecialInstructions();
+	std::string expandSpecialInstruction(const std::string& instruction);
+	int readImmediate(const std::string& token, int lineNumber) const;
+	Instruction parseLine(const std::string& line, int currentLine);
+
+	static std::string formatOutput(std::string s);
+	static std::string createAssembledLine(const Instruction& instruction);
+	static bool isCommented(const std::string& s);
+	//returns -1 if the token is not a register
+	static int readRegister(const std::string& token);
 };

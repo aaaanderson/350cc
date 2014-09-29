@@ -5,6 +5,9 @@
 
 using namespace std;
 
+map<string, int> Assembler::opcodes = { { "add", 0x0 }, { "slt", 0x2 }, { "lea", 0xc }, { "call", 0xd }, { "brz", 0xf }, { "ld", 0xa }, { "st", 0xb } };
+map<string, int> Assembler::registers = { { "r0", 0x0 }, { "r1", 0x1 }, { "r2", 0x2 }, { "r3", 0x3 }, { "r4", 0x4 }, { "r5", 0x5 }, { "r6", 0x6 }, { "r7", 0x7 } };
+map<string, SpecialOpcodes> Assembler::specialInstructions = { { "callFunc", callFunc }, { "ret", ret }, { "push", push }, { "pop", pop } };
 
 string Assembler::formatOutput(string s)
 {
@@ -14,6 +17,12 @@ string Assembler::formatOutput(string s)
 	}
 
 	return s;
+}
+
+bool Assembler::isCommented(const string& s)
+{
+	const int hasComment = s.find("//");
+	return hasComment >= 0;
 }
 
 string Assembler::createAssembledLine(const Instruction& instruction)
@@ -45,19 +54,19 @@ string Assembler::createAssembledLine(const Instruction& instruction)
 	return string(outputs);
 }
 
-Instruction Assembler::parseLine(const string& line, int currentLine, string& errorText)
+Instruction Assembler::parseLine(const string& line, int currentLine)
 {
 	Instruction parsedInstruction;
 	parsedInstruction.invalid = false;
-	
+	parsedInstruction.skipAmount = 0;
+
 	//get opcode
 	stringstream lineStream(line);
 
 	string instructionName;
 	lineStream >> instructionName;
 
-	const int hasComment = instructionName.find("//");
-	if (hasComment >= 0)
+	if (Assembler::isCommented(instructionName))
 	{
 		parsedInstruction.invalid = true;
 		return parsedInstruction;
@@ -98,20 +107,9 @@ Instruction Assembler::parseLine(const string& line, int currentLine, string& er
 			stringstream nStream(line.substr(2));
 			int res = 0;
 			nStream >> std::hex >> res;
-			parsedInstruction.data = static_cast<short>(res);
-			/*if (line[2] < 57) 
-			{
-
-			}
-			else //hex character
-			{
-				string fString = line.substr(2);
-				fString[0] = 0;
-				stringstream nStream(fString);
-				nStream >> std::hex >> parsedInstruction.data + ((line[0] - a) + 10;
-			}*/
-			
+			parsedInstruction.data = static_cast<short>(res);		
 		}
+
 		return parsedInstruction;
 	}
 
@@ -123,11 +121,12 @@ Instruction Assembler::parseLine(const string& line, int currentLine, string& er
 		if (ind < 0)
 		{ 
 			//is not a label
-			errorText += "ERROR: Invalid opcode " + instructionName + " at line " + to_string(currentLine) + "\n";
+			this->errorText += "ERROR: Invalid opcode " + instructionName + " at line " + to_string(currentLine) + "\n";
 		}
 
 		return parsedInstruction;
 	}
+
 	parsedInstruction.opcode = opcode->second;
 
 	string rd;
@@ -138,33 +137,19 @@ Instruction Assembler::parseLine(const string& line, int currentLine, string& er
 
 	lineStream >> registerOrLabelOrConstant;
 
-	//check if register
-	const auto registerA = registers.find(registerOrLabelOrConstant);
-	if (registerA != registers.end())
+	//check if register	
+	if ((parsedInstruction.ra = Assembler::readRegister(registerOrLabelOrConstant)) < 0)
 	{
-		parsedInstruction.ra = registerA->second;
-	}
-	else
-	{
+		//Not a register, must be an 8-bit immediate
+
 		parsedInstruction.type = C;
 		parsedInstruction.format = 1;
 
-		//check if label
-		const auto label = labels.find(registerOrLabelOrConstant);
-		if (label != labels.end())
-		{
-			parsedInstruction.imm8 = label->second - currentLine - 1;
-		}
-		else
-		{
-			//re-read the token as a number
-			stringstream nStream(registerOrLabelOrConstant);
-			nStream >> parsedInstruction.imm8;
-		}
+		parsedInstruction.imm8 = this->readImmediate(registerOrLabelOrConstant, currentLine);
 
 		if (parsedInstruction.imm8 > 128 - 1 || parsedInstruction.imm8 < -128)
 		{
-			errorText += "Error: value " + to_string(parsedInstruction.imm8) + " for imm8 at line " + to_string(currentLine) + " does not fit in 8 bits";
+			this->errorText += "Error: value " + to_string(parsedInstruction.imm8) + " for imm8 at line " + to_string(currentLine) + " does not fit in 8 bits";
 			parsedInstruction.invalid = true;
 		}
 
@@ -174,11 +159,9 @@ Instruction Assembler::parseLine(const string& line, int currentLine, string& er
 	lineStream >> registerOrLabelOrConstant;
 
 	//check if register b
-	const auto registerB = registers.find(registerOrLabelOrConstant);
 
-	if (registerB != registers.end())
+	if ((parsedInstruction.rb = Assembler::readRegister(registerOrLabelOrConstant)) >= 0)
 	{
-		parsedInstruction.rb = registerB->second;
 		parsedInstruction.type = A;
 		parsedInstruction.format = 1;
 	}
@@ -187,22 +170,11 @@ Instruction Assembler::parseLine(const string& line, int currentLine, string& er
 		parsedInstruction.type = B;
 		parsedInstruction.format = 0;
 
-		//check if label
-		const auto label = labels.find(registerOrLabelOrConstant);
-		if (label != labels.end())
-		{
-			parsedInstruction.imm5 = label->second - currentLine - 1;
-		}
-		else
-		{
-			//re-read the token as a number
-			stringstream nStream(registerOrLabelOrConstant);
-			nStream >> parsedInstruction.imm5;
-		}
+		parsedInstruction.imm5 = this->readImmediate(registerOrLabelOrConstant, currentLine);
 
 		if (parsedInstruction.imm5 > 16 - 1 || parsedInstruction.imm5 < -16)
 		{
-			errorText += "Error: value " + to_string(parsedInstruction.imm5) + " for imm5 at line " + to_string(currentLine) + " does not fit in 5 bits";
+			this->errorText += "Error: value " + to_string(parsedInstruction.imm5) + " for imm5 at line " + to_string(currentLine) + " does not fit in 5 bits";
 			parsedInstruction.invalid = true;
 		}
 	}
@@ -210,7 +182,38 @@ Instruction Assembler::parseLine(const string& line, int currentLine, string& er
 	return parsedInstruction;
 }
 
-bool Assembler::findLabels(string input, string& errorText)
+//returns -1 if the token is not a register
+int Assembler::readRegister(const string& token)
+{
+	const auto reg = Assembler::registers.find(token);
+	if (reg != registers.end())
+	{
+		return reg->second;
+	}
+
+	return -1;
+}
+
+int Assembler::readImmediate(const string& token, int lineNumber) const
+{
+	int retValue = 0;
+
+	const auto label = this->labels.find(token);
+	if (label != labels.end())
+	{
+		retValue = label->second - lineNumber - 1;
+	}
+	else
+	{
+		//not a label, re-read the token as a number
+		stringstream nStream(token);
+		nStream >> retValue;
+	}
+
+	return retValue;
+}
+
+bool Assembler::findLabels(string input)
 {
 	stringstream inp(input);
 
@@ -233,7 +236,7 @@ bool Assembler::findLabels(string input, string& errorText)
 			const int hasH = newLabel.find('h');
 			if (this->useHProtection && hasH > -1)
 			{
-				errorText += "ERROR: label '" + newLabel + "' contains the letter 'h'.\n";
+				this->errorText += "ERROR: label '" + newLabel + "' contains the letter 'h'.\n";
 				return false; 
 			}
 			this->labels[newLabel] = lineCount;
@@ -266,33 +269,99 @@ bool Assembler::findLabels(string input, string& errorText)
 string Assembler::GenerateStackCode()
 {
 	string stackCode;
-	stackCode += "lea r6 stackBegin //init stack ptr\n";
+	stackCode += "//Initialize stack pointer\n";
+	stackCode += "lea r6 stackBegin\n";
 	stackCode += "\n";
 	stackCode += "//start program code here\n";
 	stackCode += "\n";
 	stackCode += "\n";
 	stackCode += "\n";
-	stackCode += ".skip 64 //stack grows down\n";
+	stackCode += "//Stack location\n";
+	stackCode += ".skip 64\n";
 	stackCode += "stackBegin:\n";
-
 
 	return stackCode;
 }
 
-map<string, int> Assembler::opcodes = { { "add", 0x0 }, { "slt", 0x2 }, { "lea", 0xc }, { "call", 0xd }, { "brz", 0xf }, { "ld", 0xa }, { "st", 0xb } };
-map<string, int> Assembler::registers = { { "r0", 0x0 }, { "r1", 0x1 }, { "r2", 0x2 }, { "r3", 0x3 }, { "r4", 0x4 }, { "r5", 0x5 }, { "r6", 0x6 }, { "r7", 0x7 } };
+static const string scratchReg = "r5";
+string Assembler::expandSpecialInstruction(const string& instruction)
+{
+	string expandedAssemblyCode = "";
 
-string Assembler::Assemble(const string& input, string& errorText)
-{	
-	findLabels(input, errorText);
-	if (errorText != "")
+	stringstream inp(instruction);
+
+	string instructionName;
+	inp >> instructionName;
+
+	const SpecialOpcodes opcode = Assembler::specialInstructions[instructionName];
+
+	string nextToken;
+	inp >> nextToken;
+
+	switch (opcode)
 	{
-		return "";
+	case push:
+	{
+		expandedAssemblyCode += "//push\n";
+		const int reg = Assembler::readRegister(nextToken);
+		if (reg >= 0)
+		{
+			//generate code to push register onto the stack
+			expandedAssemblyCode += "st " + nextToken + " r6 0\n";
+		}
+		else
+		{
+			//generate code to push immediate onto the stack
+			//uses r5 as scratch register currently
+			expandedAssemblyCode += "add " + scratchReg + " r7 " + nextToken + " //" + scratchReg + " scratch reg\n";
+			expandedAssemblyCode += "st " + scratchReg + " r6 0\n";
+		}
+
+		expandedAssemblyCode += "add r6 r6 -1 //decr stack ptr\n";
+		break;
+	}
+	case pop:
+	{
+		expandedAssemblyCode += "//pop\n";
+		const int reg = Assembler::readRegister(nextToken);
+
+		if (reg < 0)
+		{
+			this->errorText += "Error: argument " + nextToken + " to 'pop' is not a valid register\n";
+			return "";
+		}
+
+		expandedAssemblyCode += "ld " + nextToken + " r6 0\n";
+		expandedAssemblyCode += "add r6 r6 1 //incr stack ptr\n";
+		break;
+	}
+	case callFunc:
+	{
+		expandedAssemblyCode += "//callFunc\n";
+		expandedAssemblyCode += "lea " + scratchReg + " 0 //" + scratchReg + " scratch\n";
+		expandedAssemblyCode += "st " + scratchReg + " r6 0 //save PC on stack\n";
+		expandedAssemblyCode += "add r6 r6 -1 //decr stack ptr\n";
+		expandedAssemblyCode += "brz r7 " + nextToken + "\n";
+		break;
+	}
+	case ret:
+	{
+		expandedAssemblyCode += "//ret\n";
+		expandedAssemblyCode += "ld r5 r6 0 //load PC, r5 scratch\n";
+		expandedAssemblyCode += "add r6 r6 1 //incr stack ptr\n";
+		expandedAssemblyCode += "brz r7 r5 //return\n";
+		break;
+	}
+	default:
+		break;
 	}
 
-	vector<string> outputLines;
+	return expandedAssemblyCode;
+}
 
-	stringstream inp(input);
+void Assembler::expandSpecialInstructions()
+{
+	stringstream inp(this->assemblyCode);
 
 	while (!inp.eof())
 	{
@@ -304,7 +373,54 @@ string Assembler::Assemble(const string& input, string& errorText)
 			continue;
 		}
 
-		const Instruction nextInstruction = parseLine(nextLine, outputLines.size(), errorText);
+		stringstream lineStream(nextLine);
+		string instructionName;
+		lineStream >> instructionName;
+
+		if (Assembler::isCommented(instructionName))
+		{
+			continue;
+		}
+
+		const auto opcode = Assembler::specialInstructions.find(instructionName);
+		if (opcode != Assembler::specialInstructions.end())
+		{
+			this->hasExpandedCode = true;
+			const int textPos = this->assemblyCode.find(nextLine);
+			this->assemblyCode.erase(textPos, nextLine.length());
+			const string expandedCode = Assembler::expandSpecialInstruction(nextLine);
+			this->assemblyCode.insert(textPos, expandedCode);
+		}
+	}
+}
+
+void Assembler::prepareInput()
+{
+	this->expandSpecialInstructions();
+	this->findLabels(this->assemblyCode);
+}
+
+string Assembler::Assemble()
+{	
+	this->prepareInput();
+	if (this->errorText != "")
+		return "";
+
+	vector<string> outputLines;
+
+	stringstream inp(this->assemblyCode);
+
+	while (!inp.eof())
+	{
+		string nextLine;
+		getline(inp, nextLine);
+
+		if (nextLine.length() == 0 || nextLine[0] == 0)
+		{
+			continue;
+		}
+
+		const Instruction nextInstruction = parseLine(nextLine, outputLines.size());
 
 		if (!nextInstruction.invalid && !this->isParsingData)
 			outputLines.push_back(createAssembledLine(nextInstruction));
